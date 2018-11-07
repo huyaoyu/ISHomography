@@ -92,6 +92,10 @@ message(STATUS "    libraries: ${OpenCV_LIBS}")
 message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}")
 
 
+# Boost.
+find_package(Boost REQUIRED COMPONENTS exception )
+message( STATUS "Boost_LIBS: ${Boost_LIBRARIES}" )
+
 SET( CXX_FLAGS "-g" )
 SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${CXX_FLAGS}" )
 
@@ -101,5 +105,5 @@ SET( CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} ${CXX_FLAGS}" )
 #   ${LIB_BOOST_EXCEPTION}
 # )
 
-target_link_libraries(${PROJECT_NAME}_exe ${OpenCV_LIBS}
+target_link_libraries(${PROJECT_NAME}_exe ${OpenCV_LIBS} ${Boost_LIBRARIES}
 )
