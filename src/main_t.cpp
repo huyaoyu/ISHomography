@@ -15,6 +15,7 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/xfeatures2d.hpp>
+#include <opencv2/stitching/detail/blenders.hpp>
 
 using namespace cv;
 using namespace cv::xfeatures2d;
@@ -138,6 +139,8 @@ public:
             good_matches.clear();
             goodPnt1.clear();
             goodPnt2.clear();
+
+            count++;
         }
     }
 
@@ -166,7 +169,7 @@ void put_new_corners( InputArray _src, InputArray _H, OutputArray _corners )
     _corners.getMat() = H * corners;
 }
 
-void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, OutputArray _warpped, InputOutputArray _HOrigin )
+void warp_and_blend_images( InputArray _base, InputArray _new, InputArray _HNew, OutputArray _warpped, InputOutputArray _HOrigin )
 {
     Mat baseImg = _base.getMat();
     Mat newImg  = _new.getMat();
@@ -175,7 +178,7 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
     
     // Get the image coordinates of the warpped corners of the new image.
     Mat corners;
-    put_new_corners( newImg, HNew, corners );
+    put_new_corners( newImg, HOrigin * HNew, corners );
 
     cout << "The four corners of the new image are: " << endl;
     for ( int i = 0; i < corners.cols; i++ )
@@ -189,6 +192,8 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
 
     real shiftPositiveX = 0.0;
     real shiftPositiveY = 0.0;
+    real enlargeX = 0.0;
+    real enlargeY = 0.0;
     real tempX = 0.0;
     real tempY = 0.0;
 
@@ -200,19 +205,26 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
         {
             shiftPositiveX = -tempX;
         }
-        else if ( tempX > W + shiftPositiveX )
-        {
-            shiftPositiveX = tempX - W;
-        }
 
         tempY = corners.at<real>(1, i);
         if ( tempY < 0 && -tempY > shiftPositiveY )
         {
             shiftPositiveY = -tempY;
         }
-        else if ( tempY > H + shiftPositiveY )
+    }
+
+    for ( int i = 0; i < corners.cols; i++ )
+    {
+        tempX = corners.at<real>(0, i);
+        if ( tempX > W + enlargeX )
         {
-            shiftPositiveY = tempY - H;
+            enlargeX = tempX - W;
+        }
+
+        tempY = corners.at<real>(1, i);
+        if ( tempY > H + enlargeY )
+        {
+            enlargeY = tempY - H;
         }
     }
 
@@ -222,11 +234,9 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
     shift.at<real>(0, 2) = shiftPositiveX;
     shift.at<real>(1, 2) = shiftPositiveY;
 
-    HOrigin = shift * HOrigin;
-
     // New image size.
-    W += shiftPositiveX;
-    H += shiftPositiveY;
+    W += shiftPositiveX + enlargeX;
+    H += shiftPositiveY + enlargeY;
 
     // Create new image.
     Mat enlargedBase, warppedNew;
@@ -235,7 +245,13 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
     warpPerspective( baseImg, enlargedBase, shift, Size( W, H ), INTER_LINEAR, BORDER_CONSTANT );
     
     // Warp the new image.
-    warpPerspective( newImg, warppedNew, shift * HNew, Size( W, H ), INTER_LINEAR, BORDER_CONSTANT );
+    Mat shiftedH = shift * HOrigin * HNew;
+    shiftedH /= shiftedH.at<real>(2, 2);
+    warpPerspective( newImg, warppedNew, shiftedH, Size( W, H ), INTER_LINEAR, BORDER_CONSTANT );
+    
+    // Update the original homography matrix of the base image.
+    // HOrigin = shiftedH;
+    _HOrigin.assign( shiftedH );
 
     // // Test use.
     // std::vector<int> jpegParams;
@@ -248,21 +264,50 @@ void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, O
     // imshow("MovedNewImage", warppedNew);
     // imwrite("WarppedNewImage.jpg", warppedNew, jpegParams);
 
-    // Threshold.
-    Mat newImgThreshold, bitwiseNotThreshold;
-    Mat newImgGray;
-    cvtColor( warppedNew, newImgGray, COLOR_BGR2GRAY );
-    threshold( newImgGray, newImgThreshold, 0, 255, THRESH_BINARY );
-    bitwise_not( newImgThreshold, bitwiseNotThreshold );
-
     _warpped.create( H, W, CV_8UC3);
     Mat warpped = _warpped.getMat();
 
-    cout << "warpped ( " << warpped.rows << ", " << warpped.cols << " )" << endl;
-    cout << "bitwiseNotThreshold ( " << bitwiseNotThreshold.rows << ", " << bitwiseNotThreshold.cols << " )" << endl;
+    Ptr<detail::MultiBandBlender> blender = new detail::MultiBandBlender();
+    Point leftCorner = Point(0, 0);
+    // std::vector<Point> leftCornerVec;
+    // leftCornerVec.push_back( leftCorner );
+    // leftCornerVec.push_back( leftCorner );
 
-    add( warpped, enlargedBase, warpped, bitwiseNotThreshold, CV_8U );
-    add( warpped, warppedNew, warpped, noArray(), CV_8U );
+    // std::vector<Size> imgSizeVec;
+    // imgSizeVec.push_back( Size( W, H ) );
+    // imgSizeVec.push_back( Size( W, H ) );
+
+    blender->prepare( Rect( 0, 0, W, H ) );
+
+    // // Threshold.
+    // Mat newImgThreshold, bitwiseNotThreshold;
+    // Mat newImgGray;
+    // cvtColor( warppedNew, newImgGray, COLOR_BGR2GRAY );
+    // threshold( newImgGray, newImgThreshold, 0, 255, THRESH_BINARY );
+    // bitwise_not( newImgThreshold, bitwiseNotThreshold );
+
+    // cout << "warpped ( " << warpped.rows << ", " << warpped.cols << " )" << endl;
+    // cout << "bitwiseNotThreshold ( " << bitwiseNotThreshold.rows << ", " << bitwiseNotThreshold.cols << " )" << endl;
+
+    // add( warpped, enlargedBase, warpped, bitwiseNotThreshold, CV_8U );
+    // add( warpped, warppedNew, warpped, noArray(), CV_8U );
+
+    Mat grayBase, maskBase;
+    cvtColor( enlargedBase, grayBase, COLOR_BGR2GRAY );
+    threshold( grayBase, maskBase, 1, 255, THRESH_BINARY );
+
+    blender->feed( enlargedBase, maskBase, leftCorner );
+
+    Mat grayNew, maskNew;
+    cvtColor( warppedNew, grayNew, COLOR_BGR2GRAY );
+    threshold( grayNew, maskNew, 1, 255, THRESH_BINARY );
+
+    blender->feed( warppedNew, maskNew, leftCorner );
+
+    Mat warppedTemp, maskResult;
+    blender->blend( warppedTemp, maskResult ); // Note: The first argument for blend() is of type InputOutputArray!
+
+    warppedTemp.convertTo(warpped, (warpped.type() / 8) * 8);
 }
 
 int main_backup( int argc, char* argv[] );
@@ -274,40 +319,61 @@ int main( int argc, char* argv[] )
 
     CommandLineParser parser( argc, argv, keys );
 
-    std::string imgFn1 = parser.get<String>("input1");
-    std::string imgFn2 = parser.get<String>("input2");
+    std::vector<std::string> imgFns;
+    imgFns.push_back( "../Data/1458400804.000000.jpg" );
+    imgFns.push_back( "../Data/1458400805.000000.jpg" );
+    imgFns.push_back( "../Data/1458400806.000000.jpg" );
+    imgFns.push_back( "../Data/1458400807.000000.jpg" );
+    imgFns.push_back( "../Data/1458400808.000000.jpg" );
+    imgFns.push_back( "../Data/1458400809.000000.jpg" );
+    imgFns.push_back( "../Data/1458400810.000000.jpg" );
+    imgFns.push_back( "../Data/1458400811.000000.jpg" );
+    imgFns.push_back( "../Data/1458400812.000000.jpg" );
 
-    Mat img1 = imread( imgFn1, IMREAD_GRAYSCALE );
-    Mat img2 = imread( imgFn2, IMREAD_GRAYSCALE );
-
-    if ( img1.empty() || img2.empty() )
+    std::vector<Mat> imgVec;
+    std::vector<std::string>::iterator iterString;
+    int imgCount = 0;
+    for ( iterString = imgFns.begin(); iterString != imgFns.end(); iterString++ )
     {
-        cout << "Could not open or find the image!\n" << endl;
-        parser.printMessage();
-        return -1;
+        imgVec.push_back( imread( *iterString, IMREAD_GRAYSCALE ) );
+        if ( imgVec.at(imgCount).empty() )
+        {
+            cout << "Could not open or find the image!\n" << endl;
+            parser.printMessage();
+            return -1;
+        }
+
+        imgCount++;
     }
 
-    std::vector<Mat> inputMats;
     std::vector<Mat> Hs;
 
-    inputMats.push_back( img1 );
-    inputMats.push_back( img2 );
-
     PairwiseHomography ph;
-    ph.compute( inputMats, Hs );
+    ph.mMinHessian = 5000;
+    ph.compute( imgVec, Hs );
+    imgVec.clear();
 
     cout << "Hs.size() = " << Hs.size() << endl;
 
     // Warp image.
     // Open the color images.
-    img1 = imread( imgFn1 );
-    img2 = imread( imgFn2 );
+    std::vector<Mat> imgColorVec;
+    for ( iterString = imgFns.begin(); iterString != imgFns.end(); iterString++ )
+    {
+        imgColorVec.push_back( imread( *iterString ) );
+    }
 
     Mat HOrigin;
-    Mat resImage;
+    Mat resImage = imgColorVec.at(0);
 
     HOrigin = Mat::eye(3, 3, CV_64FC1);
-    warp_and_add_images( img1, img2, Hs.at(0), resImage, HOrigin );
+
+    for ( int i = 1; i < imgColorVec.size(); i++ )
+    {
+        warp_and_blend_images( resImage, imgColorVec.at(i), Hs.at(i-1), resImage, HOrigin );
+        cout << "HOrigin = " << endl;
+        cout << HOrigin << endl;
+    }
 
     imwrite("ResImage.jpg", resImage, gJpegParams);
 
