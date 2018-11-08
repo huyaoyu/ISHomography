@@ -31,7 +31,9 @@ const char* keys =
     "{ input1 | ../Data/1458400805.000000.jpg | Path to input image 1. }"
     "{ input2 | ../Data/1458400806.000000.jpg | Path to input image 2. }";
 
-typedef float real;
+typedef double real;
+
+std::vector<int> gJpegParams;
 
 class PairwiseHomography
 {
@@ -43,7 +45,7 @@ public:
 
     ~PairwiseHomography() { }
 
-    void compute(InputArray _src, OutputArray _Hs)
+    void compute(InputArray _src, std::vector<Mat>& HsVec)
     {
         if ( false == _src.isMatVector() )
         {
@@ -51,17 +53,8 @@ public:
             BOOST_THROW_EXCEPTION( exception_base() << ExceptionInfoString( "_src is expected to be an instance of std::vector<Mat>." ) );
         }
 
-        if ( false == _Hs.isMatVector() )
-        {
-            // It is an error for now.
-            BOOST_THROW_EXCEPTION( exception_base() << ExceptionInfoString( "_Hs is expected to be an instance of std::vector<Mat>." ) );
-        }
-
         std::vector<Mat> srcVec;
         _src.getMatVector( srcVec );
-
-        std::vector<Mat> HsVec;
-        _Hs.getMatVector( HsVec );
 
         Ptr<SURF> detector = SURF::create( mMinHessian );
         std::vector<KeyPoint> keypoints1, keypoints2;
@@ -155,10 +148,130 @@ public:
     real mMatchFilterRatio;
 };
 
+void put_new_corners( InputArray _src, InputArray _H, OutputArray _corners )
+{
+    Mat src = _src.getMat();
+    Mat H   = _H.getMat();
+    
+    // Get the four corners.
+    Mat corners = Mat::ones( 3, 4, CV_64FC1 );
+
+    corners.at<real>(0, 0) =        0; corners.at<real>(1, 0) = 0;
+    corners.at<real>(0, 1) = src.cols; corners.at<real>(1, 1) = 0;
+    corners.at<real>(0, 2) = src.cols; corners.at<real>(1, 2) = src.rows;
+    corners.at<real>(0, 3) =        0; corners.at<real>(1, 3) = src.rows;
+
+    // Warp the corners;
+    _corners.create( Size( corners.cols, corners.rows), corners.type() );
+    _corners.getMat() = H * corners;
+}
+
+void warp_and_add_images( InputArray _base, InputArray _new, InputArray _HNew, OutputArray _warpped, InputOutputArray _HOrigin )
+{
+    Mat baseImg = _base.getMat();
+    Mat newImg  = _new.getMat();
+    Mat HNew    = _HNew.getMat();
+    Mat HOrigin = _HOrigin.getMat();
+    
+    // Get the image coordinates of the warpped corners of the new image.
+    Mat corners;
+    put_new_corners( newImg, HNew, corners );
+
+    cout << "The four corners of the new image are: " << endl;
+    for ( int i = 0; i < corners.cols; i++ )
+    {
+        cout << "( " << corners.at<real>(0, i) << ", " << corners.at<real>(1, i) << " )" << endl;
+    }
+
+    // Dimensions of the base image.
+    int W = baseImg.cols;
+    int H = baseImg.rows;
+
+    real shiftPositiveX = 0.0;
+    real shiftPositiveY = 0.0;
+    real tempX = 0.0;
+    real tempY = 0.0;
+
+    // Figure out the new image size and the associated homography matrix.
+    for ( int i = 0; i < corners.cols; i++ )
+    {
+        tempX = corners.at<real>(0, i);
+        if ( tempX < 0 && -tempX > shiftPositiveX )
+        {
+            shiftPositiveX = -tempX;
+        }
+        else if ( tempX > W + shiftPositiveX )
+        {
+            shiftPositiveX = tempX - W;
+        }
+
+        tempY = corners.at<real>(1, i);
+        if ( tempY < 0 && -tempY > shiftPositiveY )
+        {
+            shiftPositiveY = -tempY;
+        }
+        else if ( tempY > H + shiftPositiveY )
+        {
+            shiftPositiveY = tempY - H;
+        }
+    }
+
+    cout << "ShiftPositiveX = " << shiftPositiveX << ", shiftPositiveY = " << shiftPositiveY << endl;
+    // Update the original homography matrix of the base image.
+    Mat shift = Mat::eye( 3, 3, CV_64FC1 );
+    shift.at<real>(0, 2) = shiftPositiveX;
+    shift.at<real>(1, 2) = shiftPositiveY;
+
+    HOrigin = shift * HOrigin;
+
+    // New image size.
+    W += shiftPositiveX;
+    H += shiftPositiveY;
+
+    // Create new image.
+    Mat enlargedBase, warppedNew;
+
+    // Move the base image.
+    warpPerspective( baseImg, enlargedBase, shift, Size( W, H ), INTER_LINEAR, BORDER_CONSTANT );
+    
+    // Warp the new image.
+    warpPerspective( newImg, warppedNew, shift * HNew, Size( W, H ), INTER_LINEAR, BORDER_CONSTANT );
+
+    // // Test use.
+    // std::vector<int> jpegParams;
+    // jpegParams.push_back( IMWRITE_JPEG_QUALITY );
+    // jpegParams.push_back( 100 );
+    // namedWindow("MovedBaseImage", WINDOW_NORMAL);
+    // imshow("MovedBaseImage", enlargedBase);
+    // imwrite("EnlargedBaseImage.jpg", enlargedBase, jpegParams);
+    // namedWindow("MovedNewImage", WINDOW_NORMAL);
+    // imshow("MovedNewImage", warppedNew);
+    // imwrite("WarppedNewImage.jpg", warppedNew, jpegParams);
+
+    // Threshold.
+    Mat newImgThreshold, bitwiseNotThreshold;
+    Mat newImgGray;
+    cvtColor( warppedNew, newImgGray, COLOR_BGR2GRAY );
+    threshold( newImgGray, newImgThreshold, 0, 255, THRESH_BINARY );
+    bitwise_not( newImgThreshold, bitwiseNotThreshold );
+
+    _warpped.create( H, W, CV_8UC3);
+    Mat warpped = _warpped.getMat();
+
+    cout << "warpped ( " << warpped.rows << ", " << warpped.cols << " )" << endl;
+    cout << "bitwiseNotThreshold ( " << bitwiseNotThreshold.rows << ", " << bitwiseNotThreshold.cols << " )" << endl;
+
+    add( warpped, enlargedBase, warpped, bitwiseNotThreshold, CV_8U );
+    add( warpped, warppedNew, warpped, noArray(), CV_8U );
+}
+
 int main_backup( int argc, char* argv[] );
 
 int main( int argc, char* argv[] )
 {
+    gJpegParams.push_back( IMWRITE_JPEG_QUALITY );
+    gJpegParams.push_back( 100 );
+
     CommandLineParser parser( argc, argv, keys );
 
     std::string imgFn1 = parser.get<String>("input1");
@@ -182,6 +295,23 @@ int main( int argc, char* argv[] )
 
     PairwiseHomography ph;
     ph.compute( inputMats, Hs );
+
+    cout << "Hs.size() = " << Hs.size() << endl;
+
+    // Warp image.
+    // Open the color images.
+    img1 = imread( imgFn1 );
+    img2 = imread( imgFn2 );
+
+    Mat HOrigin;
+    Mat resImage;
+
+    HOrigin = Mat::eye(3, 3, CV_64FC1);
+    warp_and_add_images( img1, img2, Hs.at(0), resImage, HOrigin );
+
+    imwrite("ResImage.jpg", resImage, gJpegParams);
+
+    waitKey();
 
     return 0;
 }
