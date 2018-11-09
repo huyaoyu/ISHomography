@@ -173,5 +173,7 @@ void NaiveBlender::warp_and_blend( InputArray _base, InputArray _new, InputArray
     Mat warppedTemp, maskResult;
     blender->blend( warppedTemp, maskResult ); // Note: The first argument for blend() is of type InputOutputArray!
 
+    // This is found at
+    // https://stackoverflow.com/questions/30044477/how-to-use-multi-band-blender-in-opencv
     warppedTemp.convertTo(warpped, (warpped.type() / 8) * 8);
 }
