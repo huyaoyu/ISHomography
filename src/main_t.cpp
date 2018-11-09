@@ -49,9 +49,19 @@ int main( int argc, char* argv[] )
     // imgFns.push_back( "../Data/1458400807.000000.jpg" );
     // imgFns.push_back( "../Data/1458400808.000000.jpg" );
     // imgFns.push_back( "../Data/1458400809.000000.jpg" );
-    imgFns.push_back( "../Data/1458400810.000000.jpg" );
-    imgFns.push_back( "../Data/1458400811.000000.jpg" );
+    // imgFns.push_back( "../Data/1458400810.000000.jpg" );
+    // imgFns.push_back( "../Data/1458400811.000000.jpg" );
+    // imgFns.push_back( "../Data/1458400812.000000.jpg" );
+
     imgFns.push_back( "../Data/1458400812.000000.jpg" );
+    imgFns.push_back( "../Data/1458400811.000000.jpg" );
+    imgFns.push_back( "../Data/1458400810.000000.jpg" );
+    imgFns.push_back( "../Data/1458400809.000000.jpg" );
+    imgFns.push_back( "../Data/1458400808.000000.jpg" );
+    imgFns.push_back( "../Data/1458400807.000000.jpg" );
+    imgFns.push_back( "../Data/1458400806.000000.jpg" );
+    imgFns.push_back( "../Data/1458400805.000000.jpg" );
+    imgFns.push_back( "../Data/1458400804.000000.jpg" );
 
     std::vector<Mat> imgVec;
     std::vector<std::string>::iterator iterString;
